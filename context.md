@@ -38,9 +38,9 @@ The project architecture has been fully upgraded to support modern primitives. W
 
 | Config | Tokenizer | Pos. Embedding | Val Perplexity | Params |
 | :--- | :--- | :--- | :--- | :--- |
-| **Baseline** | char-level | learned | ~1.48 (at 5k steps) | ~10.7M |
-| **+BPE** | BPE (5000 vocab) | learned | *TBD (Training)* | ~7.34M |
-| **+BPE+RoPE** | BPE (5000 vocab) | RoPE | *TBD (Training)* | ~7.27M |
+| **Baseline** | char-level | learned | ~13.94 (at 50 steps) | ~10.7M |
+| **+BPE** | BPE (5000 vocab) | learned | ~349.79 (at 50 steps) | ~7.34M |
+| **+BPE+RoPE** | BPE (5000 vocab) | RoPE | ~331.84 (at 50 steps) | ~7.27M |
 
 ## How to use the project
 1.  **To Train**: Run `python train.py`. It will load `checkpoints/gpt_model.pt` if it exists and resume training, saving every 500 steps.

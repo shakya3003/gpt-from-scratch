@@ -94,9 +94,9 @@ This project tracks model performance through a structured ablation study to qua
 
 | Config | Tokenizer | Pos. Embedding | Val Perplexity | Params |
 | :--- | :--- | :--- | :--- | :--- |
-| **Baseline** | char-level | learned | ~4.39 (Raw) -> ~1.48 (Trained) | ~10.7M |
-| **+BPE** | BPE (5000 vocab) | learned | *Training in Progress* | ~7.34M |
-| **+BPE+RoPE** | BPE (5000 vocab) | RoPE | *Training in Progress* | ~7.27M |
+| **Baseline** | char-level | learned | ~13.94 (at 50 steps) | ~10.7M |
+| **+BPE** | BPE (5000 vocab) | learned | ~349.79 (at 50 steps) | ~7.34M |
+| **+BPE+RoPE** | BPE (5000 vocab) | RoPE | ~331.84 (at 50 steps) | ~7.27M |
 
 *(Note: The `eval_suite.py` script is currently running to finalize the BPE and RoPE validation numbers. Parameter counts dropped for BPE due to an intentional reduction in embedding dimension to offset the larger vocab table).*
 
