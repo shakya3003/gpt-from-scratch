@@ -1,10 +1,18 @@
 import os
+import argparse
 import torch
 from src.config import GPTConfig
-from src.tokenizer import CharacterTokenizer
+from src.tokenizer import BPETokenizer
 from src.model import GPTLanguageModel
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate text from the trained GPT model.")
+    parser.add_argument("--prompt", type=str, default="ROMEO:\n", help="The starting prompt for generation.")
+    parser.add_argument("--max_tokens", type=int, default=500, help="Maximum number of tokens to generate.")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Temperature for sampling. Lower is more deterministic.")
+    parser.add_argument("--top_k", type=int, default=None, help="Top-K sampling to restrict to top K most likely tokens.")
+    args = parser.parse_args()
+
     config = GPTConfig()
     
     if torch.backends.mps.is_available():
@@ -17,7 +25,7 @@ def main():
     print(f"Using device: {config.device}")
 
     data_path = os.path.join("data", "tinyshakespeare.txt")
-    tokenizer = CharacterTokenizer(data_path)
+    tokenizer = BPETokenizer(data_path, vocab_size=5000)
     config.vocab_size = tokenizer.vocab_size
 
     # Initialize model and load weights
@@ -32,20 +40,22 @@ def main():
     model.to(config.device)
     model.eval()
 
-    print("Model loaded successfully. Generating text...\n")
+    print(f"Model loaded successfully. Generating {args.max_tokens} tokens with temperature {args.temperature}...\n")
     print("-" * 50)
-
-    # Set your custom prompt here
-    start_text = "Romeo\n"
     
     # Encode the text into integers
-    context_list = tokenizer.encode(start_text)
+    context_list = tokenizer.encode(args.prompt)
     
     # Convert to a PyTorch tensor with shape (1, T)
     context = torch.tensor([context_list], dtype=torch.long, device=config.device)
     
-    # Generate 500 new tokens on top of your prompt
-    generated_tokens = model.generate(context, max_new_tokens=500)[0].tolist()
+    # Generate new tokens
+    generated_tokens = model.generate(
+        context, 
+        max_new_tokens=args.max_tokens, 
+        temperature=args.temperature, 
+        top_k=args.top_k
+    )[0].tolist()
     
     # Decode and print the entire sequence (prompt + generated text)
     print(tokenizer.decode(generated_tokens))

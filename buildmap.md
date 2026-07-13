@@ -38,8 +38,8 @@ This document outlines the step-by-step roadmap for building a Generative Pre-tr
 ## Phase 5: Checkpointing & Scaling
 - [ ] **Model Checkpointing**: Save and load model weights and optimizer states.
 - [ ] **Optimization**:
-  - [ ] Implement mixed-precision training (e.g., using `torch.amp`).
-  - [ ] (Optional) Flash Attention for faster training.
+  - [x] Implement mixed-precision training (e.g., using `torch.amp`).
+  - [x] (Optional) Flash Attention for faster training.
 - [ ] **Scaling**: Scale up the model dimensions (layers, heads, embedding size) as compute allows.
 
 ---

@@ -3,43 +3,64 @@ import torch.nn as nn
 from torch.nn import functional as F
 from src.config import GPTConfig
 
-class Head(nn.Module):
-    """ One head of self-attention """
-    def __init__(self, head_size: int, config: GPTConfig):
-        super().__init__()
-        self.key = nn.Linear(config.n_embd, head_size, bias=False)
-        self.query = nn.Linear(config.n_embd, head_size, bias=False)
-        self.value = nn.Linear(config.n_embd, head_size, bias=False)
-        # tril is not a parameter of the model, so we register it as a buffer
-        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        B, T, C = x.shape
-        k = self.key(x)   # (B, T, head_size)
-        q = self.query(x) # (B, T, head_size)
-        
-        # Compute attention scores ("affinities")
-        wei = q @ k.transpose(-2, -1) * (C ** -0.5) # (B, T, head_size) @ (B, head_size, T) -> (B, T, T)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
-        wei = self.dropout(wei)
-        
-        # Perform the weighted aggregation of the values
-        v = self.value(x) # (B, T, head_size)
-        out = wei @ v # (B, T, T) @ (B, T, head_size) -> (B, T, head_size)
-        return out
-
 class MultiHeadAttention(nn.Module):
-    """ Multiple heads of self-attention in parallel """
+    """ Multiple heads of self-attention in parallel (Vectorized with Flash Attention) """
     def __init__(self, num_heads: int, head_size: int, config: GPTConfig):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size, config) for _ in range(num_heads)])
+        assert config.n_embd == num_heads * head_size, "Embedding dimension must be divisible by number of heads"
+        # Key, Query, Value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         self.proj = nn.Linear(config.n_embd, config.n_embd)
+        self.attn_dropout_p = config.dropout
         self.dropout = nn.Dropout(config.dropout)
+        
+        self.num_heads = num_heads
+        self.head_size = head_size
+        self.n_embd = config.n_embd
+        self.use_rope = config.use_rope
+        
+        if self.use_rope:
+            # Precompute cos and sin for RoPE
+            inv_freq = 1.0 / (10000 ** (torch.arange(0, head_size, 2).float() / head_size))
+            t = torch.arange(config.block_size, dtype=torch.float32)
+            freqs = torch.einsum("i,j->ij", t, inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            self.register_buffer("cos_cached", emb.cos()[None, None, :, :])
+            self.register_buffer("sin_cached", emb.sin()[None, None, :, :])
 
     def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        B, T, C = x.size()
+        
+        # calculate query, key, values for all heads in batch
+        qkv = self.c_attn(x) # (B, T, 3 * C)
+        q, k, v = qkv.split(self.n_embd, dim=2)
+        
+        # reshape to (B, num_heads, T, head_size)
+        q = q.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_size).transpose(1, 2)
+        
+        if getattr(self, "use_rope", False):
+            cos = self.cos_cached[:, :, :T, :].to(q.device)
+            sin = self.sin_cached[:, :, :T, :].to(q.device)
+            def rotate_half(x):
+                x1, x2 = x[..., :x.shape[-1]//2], x[..., x.shape[-1]//2:]
+                return torch.cat((-x2, x1), dim=-1)
+            q = (q * cos) + (rotate_half(q) * sin)
+            k = (k * cos) + (rotate_half(k) * sin)
+
+        # Flash Attention (causal)
+        out = F.scaled_dot_product_attention(
+            q, k, v, 
+            attn_mask=None, 
+            dropout_p=self.attn_dropout_p if self.training else 0.0, 
+            is_causal=True
+        )
+        
+        # re-assemble all head outputs side by side
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        
+        # output projection
         out = self.dropout(self.proj(out))
         return out
 
@@ -80,7 +101,8 @@ class GPTLanguageModel(nn.Module):
         
         # Each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
-        self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
+        if not config.use_rope:
+            self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
         
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd) # Final layer norm
@@ -102,9 +124,13 @@ class GPTLanguageModel(nn.Module):
 
         # idx and targets are both (B, T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B, T, C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T, C)
         
-        x = tok_emb + pos_emb # (B, T, C)
+        if self.config.use_rope:
+            x = tok_emb # (B, T, C)
+        else:
+            pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T, C)
+            x = tok_emb + pos_emb # (B, T, C)
+            
         x = self.blocks(x)    # (B, T, C)
         x = self.ln_f(x)      # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
@@ -120,7 +146,7 @@ class GPTLanguageModel(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens
@@ -129,6 +155,16 @@ class GPTLanguageModel(nn.Module):
             logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
+            
+            # apply temperature scaling
+            if temperature != 1.0:
+                logits = logits / temperature
+                
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+                
             # apply softmax to get probabilities
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution

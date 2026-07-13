@@ -11,11 +11,14 @@ class GPTConfig:
     device: str = "cpu"       # We will set this to 'mps' or 'cuda' in the training script if available
     eval_iters: int = 200     # Number of iterations to run during evaluation
     
-    # Model Architecture Hyperparameters (Scaled up)
-    n_embd: int = 384         # Embedding dimension
-    n_head: int = 6           # Number of attention heads
+    # Model Architecture Hyperparameters (Adjusted for larger vocab size)
+    n_embd: int = 256         # Embedding dimension (reduced from 384)
+    n_head: int = 8           # Number of attention heads (increased from 6)
     n_layer: int = 6          # Number of transformer blocks
     dropout: float = 0.2      # Dropout rate for regularization
+    
+    # RoPE Configuration
+    use_rope: bool = False    # Whether to use Rotary Positional Embeddings
     
     # Vocabulary size will be determined by the tokenizer
     vocab_size: int = 0
